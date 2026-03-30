@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/vanta/vanta-net-init.js)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/vanta/three.js)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/vanta/net.js)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/vanta/p5.js)"
+    ]
+  }
+}
