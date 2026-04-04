@@ -5,7 +5,7 @@ import BlogEditor from '../components/backoffice/BlogEditor'
 import ThesisEditor from '../components/backoffice/ThesisEditor'
 
 export default function Backoffice() {
-  const [activeTab, setActiveTab] = useState<Tab>('team')
+  const [activeTab, setActiveTab] = useState<Tab>('thesis')
 
   return (
     <div className="min-h-screen bg-black text-[#FAFAFA] p-6">
