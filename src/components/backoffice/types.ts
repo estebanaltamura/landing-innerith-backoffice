@@ -100,3 +100,4 @@ export type BlogPost = {
   pdfUrl?: string
   pdfName?: string
 }
+//
