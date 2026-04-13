@@ -84,10 +84,13 @@ export type Item = Record<string, any> & { _id: string }
 
 export type BlockType = 'h1' | 'h2' | 'p' | 'imageUrl' | 'videoUrl' | 'divider' | 'spacer'
 
+export type BlockAlign = 'left' | 'center' | 'right' | 'justify'
+
 export type Block = {
   type: BlockType
   content: string
   maxWidth?: string
+  align?: BlockAlign
 }
 
 export type BlogPost = {

@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { Block, BlockType } from './types'
+import { Block, BlockAlign, BlockType } from './types'
 import { parseInline } from './parseInline'
 
 const BLOCK_LABELS: Record<BlockType, string> = {
@@ -14,9 +14,33 @@ const BLOCK_LABELS: Record<BlockType, string> = {
 
 const NO_CONTENT_TYPES: BlockType[] = ['divider', 'spacer']
 
-// ── Paragraph sub-component with B / I buttons ───────────────────────────────
+// ── Paragraph sub-component with B / I / align buttons ──────────────────────
 
-function ParagraphBlock({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+const ALIGN_LABELS: Record<BlockAlign, string> = {
+  left: 'L',
+  center: 'C',
+  right: 'R',
+  justify: 'J',
+}
+
+const ALIGN_STYLE: Record<BlockAlign, string> = {
+  left: 'text-left',
+  center: 'text-center',
+  right: 'text-right',
+  justify: 'text-justify',
+}
+
+function ParagraphBlock({
+  value,
+  align,
+  onChange,
+  onAlignChange,
+}: {
+  value: string
+  align?: BlockAlign
+  onChange: (v: string) => void
+  onAlignChange: (a: BlockAlign | undefined) => void
+}) {
   const ref = useRef<HTMLTextAreaElement>(null)
 
   const wrapSelection = (tag: 'b' | 'i') => {
@@ -29,7 +53,6 @@ function ParagraphBlock({ value, onChange }: { value: string; onChange: (v: stri
     const close = `</${tag}>`
     const newValue = value.slice(0, start) + open + selected + close + value.slice(end)
     onChange(newValue)
-    // Restore cursor after React re-render
     const newCursor = end + open.length + close.length
     requestAnimationFrame(() => {
       el.focus()
@@ -37,9 +60,13 @@ function ParagraphBlock({ value, onChange }: { value: string; onChange: (v: stri
     })
   }
 
+  const toggleAlign = (a: BlockAlign) => {
+    onAlignChange(align === a ? undefined : a)
+  }
+
   return (
     <div className="flex flex-col gap-1.5 flex-1">
-      <div className="flex gap-1">
+      <div className="flex gap-1 flex-wrap">
         <button
           type="button"
           onMouseDown={(e) => { e.preventDefault(); wrapSelection('b') }}
@@ -54,6 +81,21 @@ function ParagraphBlock({ value, onChange }: { value: string; onChange: (v: stri
         >
           I
         </button>
+        <span className="w-px bg-gray-700 mx-0.5" />
+        {(['left', 'center', 'right', 'justify'] as BlockAlign[]).map((a) => (
+          <button
+            key={a}
+            type="button"
+            onMouseDown={(e) => { e.preventDefault(); toggleAlign(a) }}
+            className={`px-2 py-0.5 text-xs border rounded transition-colors ${
+              align === a
+                ? 'border-[#f4c430] text-[#f4c430]'
+                : 'border-gray-700 text-gray-300 hover:border-[#f4c430] hover:text-[#f4c430]'
+            }`}
+          >
+            {ALIGN_LABELS[a]}
+          </button>
+        ))}
       </div>
 
       <textarea
@@ -66,7 +108,7 @@ function ParagraphBlock({ value, onChange }: { value: string; onChange: (v: stri
       />
 
       {value.trim() && (
-        <p className="text-xs text-gray-400 px-1 leading-relaxed">
+        <p className={`text-xs text-gray-400 px-1 leading-relaxed ${align ? ALIGN_STYLE[align] : ''}`}>
           {parseInline(value)}
         </p>
       )}
@@ -123,7 +165,12 @@ export default function BlockEditor({ blocks, onChange }: Props) {
           {NO_CONTENT_TYPES.includes(block.type) ? (
             <div className="flex-1" />
           ) : block.type === 'p' ? (
-            <ParagraphBlock value={block.content} onChange={(v) => update(i, v)} />
+            <ParagraphBlock
+              value={block.content}
+              align={block.align}
+              onChange={(v) => update(i, v)}
+              onAlignChange={(a) => onChange(blocks.map((b, j) => j === i ? { ...b, align: a } : b))}
+            />
           ) : block.type === 'imageUrl' || block.type === 'videoUrl' ? (
             <div className="flex flex-col gap-1.5 flex-1">
               <input
