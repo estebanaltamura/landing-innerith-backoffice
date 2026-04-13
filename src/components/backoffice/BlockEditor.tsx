@@ -1,4 +1,6 @@
+import { useRef } from 'react'
 import { Block, BlockType } from './types'
+import { parseInline } from './parseInline'
 
 const BLOCK_LABELS: Record<BlockType, string> = {
   h1: 'H1',
@@ -11,6 +13,68 @@ const BLOCK_LABELS: Record<BlockType, string> = {
 }
 
 const NO_CONTENT_TYPES: BlockType[] = ['divider', 'spacer']
+
+// ── Paragraph sub-component with B / I buttons ───────────────────────────────
+
+function ParagraphBlock({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+
+  const wrapSelection = (tag: 'b' | 'i') => {
+    const el = ref.current
+    if (!el) return
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    const selected = value.slice(start, end)
+    const open = `<${tag}>`
+    const close = `</${tag}>`
+    const newValue = value.slice(0, start) + open + selected + close + value.slice(end)
+    onChange(newValue)
+    // Restore cursor after React re-render
+    const newCursor = end + open.length + close.length
+    requestAnimationFrame(() => {
+      el.focus()
+      el.setSelectionRange(newCursor, newCursor)
+    })
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5 flex-1">
+      <div className="flex gap-1">
+        <button
+          type="button"
+          onMouseDown={(e) => { e.preventDefault(); wrapSelection('b') }}
+          className="px-2 py-0.5 text-xs font-bold border border-gray-700 rounded text-gray-300 hover:border-[#f4c430] hover:text-[#f4c430] transition-colors"
+        >
+          B
+        </button>
+        <button
+          type="button"
+          onMouseDown={(e) => { e.preventDefault(); wrapSelection('i') }}
+          className="px-2 py-0.5 text-xs italic border border-gray-700 rounded text-gray-300 hover:border-[#f4c430] hover:text-[#f4c430] transition-colors"
+        >
+          I
+        </button>
+      </div>
+
+      <textarea
+        ref={ref}
+        rows={3}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Text..."
+        className="w-full bg-[#1a1a1a] border border-gray-700 rounded px-2 py-1.5 text-[#FAFAFA] text-sm focus:outline-none focus:border-[#f4c430] transition-colors resize-none font-mono"
+      />
+
+      {value.trim() && (
+        <p className="text-xs text-gray-400 px-1 leading-relaxed">
+          {parseInline(value)}
+        </p>
+      )}
+    </div>
+  )
+}
+
+// ── Main BlockEditor ──────────────────────────────────────────────────────────
 
 type Props = {
   blocks: Block[]
@@ -59,13 +123,7 @@ export default function BlockEditor({ blocks, onChange }: Props) {
           {NO_CONTENT_TYPES.includes(block.type) ? (
             <div className="flex-1" />
           ) : block.type === 'p' ? (
-            <textarea
-              rows={3}
-              value={block.content}
-              onChange={(e) => update(i, e.target.value)}
-              placeholder="Text..."
-              className="flex-1 bg-[#1a1a1a] border border-gray-700 rounded px-2 py-1.5 text-[#FAFAFA] text-sm focus:outline-none focus:border-[#f4c430] transition-colors resize-none"
-            />
+            <ParagraphBlock value={block.content} onChange={(v) => update(i, v)} />
           ) : block.type === 'imageUrl' || block.type === 'videoUrl' ? (
             <div className="flex flex-col gap-1.5 flex-1">
               <input
