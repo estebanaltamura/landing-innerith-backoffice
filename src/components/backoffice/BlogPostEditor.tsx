@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import { addDoc, updateDoc, collection, doc } from 'firebase/firestore'
 import { db, storage } from '../../lib/firebase'
-import { ref, uploadString, uploadBytes, getDownloadURL } from 'firebase/storage'
-import { BlogPost } from './types'
-import { TOOLBAR_BTN, INPUT_BASE, videoHTML } from './utils'
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
+import { BlogPost, Block } from './types'
+import { INPUT_BASE } from './utils'
+import BlockEditor from './BlockEditor'
 
 type Props = {
   post: BlogPost | null
@@ -16,22 +17,12 @@ export default function BlogPostEditor({ post, postsCount, onDone, onCancel }: P
   const [date, setDate] = useState(post?.date ?? '')
   const [title, setTitle] = useState(post?.title ?? '')
   const [description, setDescription] = useState(post?.description ?? '')
-  const [contentMode, setContentMode] = useState<'html' | 'pdf'>(post?.pdfUrl ? 'pdf' : 'html')
+  const [contentMode, setContentMode] = useState<'blocks' | 'pdf'>(post?.pdfUrl ? 'pdf' : 'blocks')
+  const [blocks, setBlocks] = useState<Block[]>(post?.blocks ?? [])
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pdfUrl, setPdfUrl] = useState(post?.pdfUrl ?? '')
   const [pdfName, setPdfName] = useState(post?.pdfName ?? '')
   const [saving, setSaving] = useState(false)
-  const editorRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!editorRef.current || contentMode !== 'html') return
-    if (post?.contentUrl) {
-      fetch(post.contentUrl)
-        .then((r) => r.text())
-        .then((html) => { editorRef.current!.innerHTML = html })
-        .catch(() => { editorRef.current!.innerHTML = '' })
-    }
-  }, [])
 
   const handleSave = async () => {
     setSaving(true)
@@ -44,6 +35,7 @@ export default function BlogPostEditor({ post, postsCount, onDone, onCancel }: P
       } else {
         postId = post._id
       }
+
       if (contentMode === 'pdf') {
         let finalPdfUrl = pdfUrl
         let finalPdfName = pdfName
@@ -54,15 +46,11 @@ export default function BlogPostEditor({ post, postsCount, onDone, onCancel }: P
           finalPdfName = pdfFile.name
         }
         if (!finalPdfUrl) throw new Error('No PDF')
-        await updateDoc(doc(db, 'blog', postId), { ...meta, pdfUrl: finalPdfUrl, pdfName: finalPdfName, contentUrl: '' })
+        await updateDoc(doc(db, 'blog', postId), { ...meta, pdfUrl: finalPdfUrl, pdfName: finalPdfName, blocks: [] })
       } else {
-        if (!editorRef.current) return
-        const html = editorRef.current.innerHTML
-        const storageRef = ref(storage, `blog/${postId}.html`)
-        await uploadString(storageRef, html, 'raw', { contentType: 'text/html; charset=utf-8' })
-        const contentUrl = await getDownloadURL(storageRef)
-        await updateDoc(doc(db, 'blog', postId), { ...meta, contentUrl, pdfUrl: '', pdfName: '' })
+        await updateDoc(doc(db, 'blog', postId), { ...meta, blocks, pdfUrl: '', pdfName: '' })
       }
+
       onDone()
     } catch (err) {
       console.error(err)
@@ -71,7 +59,7 @@ export default function BlogPostEditor({ post, postsCount, onDone, onCancel }: P
     }
   }
 
-  const canSave = contentMode === 'html' || !!pdfFile || !!pdfUrl
+  const canSave = contentMode === 'blocks' || !!pdfFile || !!pdfUrl
 
   return (
     <div className="flex flex-col gap-4">
@@ -97,10 +85,10 @@ export default function BlogPostEditor({ post, postsCount, onDone, onCancel }: P
       {/* Selector de modo */}
       <div className="flex items-center gap-1 p-1 bg-[#111] border border-gray-800 rounded-lg w-fit">
         <button
-          onClick={() => setContentMode('html')}
-          className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${contentMode === 'html' ? 'bg-[#f4c430] text-black' : 'text-gray-400 hover:text-white'}`}
+          onClick={() => setContentMode('blocks')}
+          className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${contentMode === 'blocks' ? 'bg-[#f4c430] text-black' : 'text-gray-400 hover:text-white'}`}
         >
-          HTML
+          Blocks
         </button>
         <button
           onClick={() => setContentMode('pdf')}
@@ -110,7 +98,7 @@ export default function BlogPostEditor({ post, postsCount, onDone, onCancel }: P
         </button>
       </div>
 
-      {/* PDF picker — siempre montado para no perder el archivo */}
+      {/* PDF picker */}
       <label className={`flex items-center gap-3 cursor-pointer border border-dashed rounded-lg px-4 py-5 hover:border-[#f4c430] transition-colors ${contentMode !== 'pdf' ? 'hidden' : ''} ${pdfFile || pdfUrl ? 'border-[#f4c430]/50' : 'border-gray-700'}`}>
         <input type="file" accept=".pdf,application/pdf" className="hidden" onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)} />
         <span className="text-2xl">📄</span>
@@ -122,39 +110,10 @@ export default function BlogPostEditor({ post, postsCount, onDone, onCancel }: P
         </div>
       </label>
 
-      {/* HTML editor — siempre montado para no perder el contenido */}
-      <div className={contentMode !== 'html' ? 'hidden' : 'flex flex-col gap-3'}>
-        <div className="flex flex-wrap gap-2 p-3 bg-[#111] border border-gray-800 rounded-lg">
-          <button
-            className={TOOLBAR_BTN}
-            onClick={() => {
-              editorRef.current?.focus()
-              document.execCommand('selectAll', false)
-              document.execCommand('foreColor', false, '#ffffff')
-              window.getSelection()?.removeAllRanges()
-            }}
-          >
-            White text
-          </button>
-          <button
-            className={TOOLBAR_BTN}
-            onClick={() => {
-              const url = window.prompt('Video URL (YouTube or direct):')
-              if (!url) return
-              editorRef.current?.focus()
-              document.execCommand('insertHTML', false, videoHTML(url))
-            }}
-          >
-            Insert video
-          </button>
-        </div>
-        <div
-          ref={editorRef}
-          contentEditable
-          suppressContentEditableWarning
-          className="min-h-[400px] bg-[#1a1a1a] border border-gray-700 rounded-lg p-5 text-[#FAFAFA] text-sm focus:outline-none focus:border-[#f4c430] transition-colors thesis-editor"
-        />
-      </div>
+      {/* Block editor */}
+      {contentMode === 'blocks' && (
+        <BlockEditor blocks={blocks} onChange={setBlocks} />
+      )}
 
       <div className="flex justify-end gap-3">
         <button onClick={onCancel} className="px-4 py-2 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-lg transition-colors">

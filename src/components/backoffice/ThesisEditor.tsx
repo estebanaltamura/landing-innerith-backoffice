@@ -1,41 +1,36 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { db, storage } from '../../lib/firebase'
-import { ref, uploadString, uploadBytes, getDownloadURL } from 'firebase/storage'
-import { TOOLBAR_BTN, videoHTML } from './utils'
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
+import { Block } from './types'
 import Spinner from './Spinner'
+import BlockEditor from './BlockEditor'
 
 export default function ThesisEditor() {
-  const editorRef = useRef<HTMLDivElement>(null)
+  const [blocks, setBlocks] = useState<Block[]>([])
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [initialHtml, setInitialHtml] = useState<string | null>(null)
-  const [contentMode, setContentMode] = useState<'html' | 'pdf'>('html')
+  const [contentMode, setContentMode] = useState<'blocks' | 'pdf'>('blocks')
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pdfUrl, setPdfUrl] = useState('')
   const [pdfName, setPdfName] = useState('')
 
   useEffect(() => {
-    getDoc(doc(db, 'thesis', 'main')).then(async (snap) => {
-      if (!snap.exists()) { setLoading(false); return }
-      const data = snap.data()
-      if (data.pdfUrl) {
-        setContentMode('pdf'); setPdfUrl(data.pdfUrl); setPdfName(data.pdfName ?? '')
-      } else if (data.contentUrl) {
-        const res = await fetch(data.contentUrl)
-        setInitialHtml(await res.text())
+    getDoc(doc(db, 'thesis', 'main')).then((snap) => {
+      if (snap.exists()) {
+        const data = snap.data()
+        if (data.pdfUrl) {
+          setContentMode('pdf')
+          setPdfUrl(data.pdfUrl)
+          setPdfName(data.pdfName ?? '')
+        } else {
+          setBlocks(data.blocks ?? [])
+        }
       }
       setLoading(false)
     })
   }, [])
-
-  // Escribe el HTML en el editor una vez que está montado y cargado
-  useEffect(() => {
-    if (!loading && initialHtml !== null && editorRef.current) {
-      editorRef.current.innerHTML = initialHtml
-    }
-  }, [loading, initialHtml])
 
   const handleSave = async () => {
     setSaving(true)
@@ -50,17 +45,15 @@ export default function ThesisEditor() {
           finalPdfName = pdfFile.name
         }
         if (!finalPdfUrl) throw new Error('No PDF')
-        await setDoc(doc(db, 'thesis', 'main'), { pdfUrl: finalPdfUrl, pdfName: finalPdfName, contentUrl: '' })
-        setPdfUrl(finalPdfUrl); setPdfName(finalPdfName); setPdfFile(null)
-        if (editorRef.current) editorRef.current.innerHTML = ''
+        await setDoc(doc(db, 'thesis', 'main'), { pdfUrl: finalPdfUrl, pdfName: finalPdfName, blocks: [] })
+        setPdfUrl(finalPdfUrl)
+        setPdfName(finalPdfName)
+        setPdfFile(null)
       } else {
-        if (!editorRef.current) return
-        const html = editorRef.current.innerHTML
-        const storageRef = ref(storage, 'thesis/main.html')
-        await uploadString(storageRef, html, 'raw', { contentType: 'text/html; charset=utf-8' })
-        const contentUrl = await getDownloadURL(storageRef)
-        await setDoc(doc(db, 'thesis', 'main'), { contentUrl, pdfUrl: '', pdfName: '' })
-        setPdfUrl(''); setPdfName(''); setPdfFile(null)
+        await setDoc(doc(db, 'thesis', 'main'), { blocks, pdfUrl: '', pdfName: '' })
+        setPdfUrl('')
+        setPdfName('')
+        setPdfFile(null)
       }
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
@@ -71,7 +64,7 @@ export default function ThesisEditor() {
     }
   }
 
-  const canSave = contentMode === 'html' || !!pdfFile || !!pdfUrl
+  const canSave = contentMode === 'blocks' || !!pdfFile || !!pdfUrl
 
   return (
     <div className="flex flex-col gap-3">
@@ -81,10 +74,10 @@ export default function ThesisEditor() {
         {/* Selector de modo */}
         <div className="flex items-center gap-1 p-1 bg-[#111] border border-gray-800 rounded-lg w-fit">
           <button
-            onClick={() => setContentMode('html')}
-            className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${contentMode === 'html' ? 'bg-[#f4c430] text-black' : 'text-gray-400 hover:text-white'}`}
+            onClick={() => setContentMode('blocks')}
+            className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${contentMode === 'blocks' ? 'bg-[#f4c430] text-black' : 'text-gray-400 hover:text-white'}`}
           >
-            HTML
+            Blocks
           </button>
           <button
             onClick={() => setContentMode('pdf')}
@@ -94,7 +87,7 @@ export default function ThesisEditor() {
           </button>
         </div>
 
-        {/* PDF picker — siempre montado para no perder el archivo */}
+        {/* PDF picker */}
         <label className={`flex items-center gap-3 cursor-pointer border border-dashed rounded-lg px-4 py-5 hover:border-[#f4c430] transition-colors ${contentMode !== 'pdf' ? 'hidden' : ''} ${pdfFile || pdfUrl ? 'border-[#f4c430]/50' : 'border-gray-700'}`}>
           <input type="file" accept=".pdf,application/pdf" className="hidden" onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)} />
           <span className="text-2xl">📄</span>
@@ -106,39 +99,10 @@ export default function ThesisEditor() {
           </div>
         </label>
 
-        {/* HTML editor — siempre montado para no perder el contenido */}
-        <div className={contentMode !== 'html' ? 'hidden' : 'flex flex-col gap-3'}>
-          <div className="flex flex-wrap gap-2 p-3 bg-[#111] border border-gray-800 rounded-lg">
-            <button
-              className={TOOLBAR_BTN}
-              onClick={() => {
-                editorRef.current?.focus()
-                document.execCommand('selectAll', false)
-                document.execCommand('foreColor', false, '#ffffff')
-                window.getSelection()?.removeAllRanges()
-              }}
-            >
-              White text
-            </button>
-            <button
-              className={TOOLBAR_BTN}
-              onClick={() => {
-                const url = window.prompt('Video URL (YouTube or direct):')
-                if (!url) return
-                editorRef.current?.focus()
-                document.execCommand('insertHTML', false, videoHTML(url))
-              }}
-            >
-              Insert video
-            </button>
-          </div>
-          <div
-            ref={editorRef}
-            contentEditable
-            suppressContentEditableWarning
-            className="min-h-[400px] bg-[#1a1a1a] border border-gray-700 rounded-lg p-5 text-[#FAFAFA] text-sm focus:outline-none focus:border-[#f4c430] transition-colors thesis-editor"
-          />
-        </div>
+        {/* Block editor */}
+        {contentMode === 'blocks' && (
+          <BlockEditor blocks={blocks} onChange={setBlocks} />
+        )}
 
         <div className="flex justify-end">
           <button

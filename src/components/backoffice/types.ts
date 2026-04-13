@@ -82,13 +82,21 @@ export const CONFIGS: Record<CrudTab, CollectionConfig> = {
 
 export type Item = Record<string, any> & { _id: string }
 
+export type BlockType = 'h1' | 'h2' | 'p' | 'imageUrl' | 'videoUrl' | 'divider' | 'spacer'
+
+export type Block = {
+  type: BlockType
+  content: string
+  maxWidth?: string
+}
+
 export type BlogPost = {
   _id: string
   order: number
   date: string
   title: string
   description: string
-  contentUrl?: string
+  blocks?: Block[]
   pdfUrl?: string
   pdfName?: string
 }
