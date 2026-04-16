@@ -1,13 +1,19 @@
-import { useState, useEffect } from 'react'
-import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { useState, useEffect, useRef } from 'react'
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore'
 import { db, storage } from '../../lib/firebase'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { Block } from './types'
 import Spinner from './Spinner'
 import BlockEditor from './BlockEditor'
+import { translateBlocks, invalidateChangedBlocks, LANG_FIELDS } from './translateBlocks'
+
+type TranslateStatus = 'idle' | 'translating' | 'done' | 'error'
 
 export default function ThesisEditor() {
   const [blocks, setBlocks] = useState<Block[]>([])
+  // Tracks the last saved state to detect which blocks changed
+  const savedBlocksRef = useRef<Block[]>([])
+
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -15,6 +21,11 @@ export default function ThesisEditor() {
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pdfUrl, setPdfUrl] = useState('')
   const [pdfName, setPdfName] = useState('')
+  const [translateStatus, setTranslateStatus] = useState<Record<string, TranslateStatus>>(
+    Object.fromEntries(LANG_FIELDS.map(({ field }) => [field, 'idle']))
+  )
+
+  // ── Load ────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     getDoc(doc(db, 'thesis', 'main')).then((snap) => {
@@ -25,12 +36,39 @@ export default function ThesisEditor() {
           setPdfUrl(data.pdfUrl)
           setPdfName(data.pdfName ?? '')
         } else {
-          setBlocks(data.blocks ?? [])
+          const loaded = data.blocks ?? []
+          setBlocks(loaded)
+          savedBlocksRef.current = loaded
         }
       }
       setLoading(false)
     })
   }, [])
+
+  // ── Translations ─────────────────────────────────────────────────────────────
+  // Sequential: each language builds on the accumulated result of the previous one.
+  // Step 1 — changed blocks already had translations stripped before save.
+  // Step 2 — any block missing any language field gets filled in.
+
+  const runTranslations = async (baseBlocks: Block[]) => {
+    let current = baseBlocks
+    for (const { key, field } of LANG_FIELDS) {
+      setTranslateStatus((s) => ({ ...s, [field]: 'translating' }))
+      try {
+        const updated = await translateBlocks(current, field, key)
+        await updateDoc(doc(db, 'thesis', 'main'), { blocks: updated })
+        setBlocks(updated)
+        savedBlocksRef.current = updated
+        current = updated
+        setTranslateStatus((s) => ({ ...s, [field]: 'done' }))
+      } catch (err) {
+        console.error(`Translation error (${key}):`, err)
+        setTranslateStatus((s) => ({ ...s, [field]: 'error' }))
+      }
+    }
+  }
+
+  // ── Save ─────────────────────────────────────────────────────────────────────
 
   const handleSave = async () => {
     setSaving(true)
@@ -45,16 +83,24 @@ export default function ThesisEditor() {
           finalPdfName = pdfFile.name
         }
         if (!finalPdfUrl) throw new Error('No PDF')
-        await setDoc(doc(db, 'thesis', 'main'), { pdfUrl: finalPdfUrl, pdfName: finalPdfName, blocks: [] })
-        setPdfUrl(finalPdfUrl)
-        setPdfName(finalPdfName)
-        setPdfFile(null)
+        await setDoc(doc(db, 'thesis', 'main'), {
+          pdfUrl: finalPdfUrl, pdfName: finalPdfName, blocks: [],
+        })
+        setPdfUrl(finalPdfUrl); setPdfName(finalPdfName); setPdfFile(null)
       } else {
-        await setDoc(doc(db, 'thesis', 'main'), { blocks, pdfUrl: '', pdfName: '' })
-        setPdfUrl('')
-        setPdfName('')
-        setPdfFile(null)
+        // Strip translations from blocks whose content changed vs last save
+        const prepared = invalidateChangedBlocks(blocks, savedBlocksRef.current)
+
+        await setDoc(doc(db, 'thesis', 'main'), { blocks: prepared, pdfUrl: '', pdfName: '' })
+        setBlocks(prepared)
+        savedBlocksRef.current = prepared
+        setPdfUrl(''); setPdfName(''); setPdfFile(null)
+
+        // Reset status indicators and kick off translations
+        setTranslateStatus(Object.fromEntries(LANG_FIELDS.map(({ field }) => [field, 'idle'])))
+        runTranslations(prepared)
       }
+
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch (err) {
@@ -66,12 +112,14 @@ export default function ThesisEditor() {
 
   const canSave = contentMode === 'blocks' || !!pdfFile || !!pdfUrl
 
+  // ── Render ───────────────────────────────────────────────────────────────────
+
   return (
     <div className="flex flex-col gap-3">
       {loading && <Spinner />}
 
       <div className={loading ? 'hidden' : 'flex flex-col gap-3'}>
-        {/* Selector de modo */}
+        {/* Mode selector */}
         <div className="flex items-center gap-1 p-1 bg-[#111] border border-gray-800 rounded-lg w-fit">
           <button
             onClick={() => setContentMode('blocks')}
@@ -99,16 +147,38 @@ export default function ThesisEditor() {
           </div>
         </label>
 
-        {/* Block editor */}
+        {/* Block editor (Spanish) */}
         {contentMode === 'blocks' && (
           <BlockEditor blocks={blocks} onChange={setBlocks} />
         )}
 
-        <div className="flex justify-end">
+        {/* Save row + translation indicators */}
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          {contentMode === 'blocks' && (
+            <div className="flex gap-2 flex-wrap">
+              {LANG_FIELDS.map(({ field, label }) => {
+                const status = translateStatus[field]
+                return (
+                  <span
+                    key={field}
+                    className={`px-2 py-0.5 text-xs rounded border font-mono ${
+                      status === 'idle'        ? 'border-gray-700 text-gray-600' :
+                      status === 'translating' ? 'border-yellow-600 text-yellow-400 animate-pulse' :
+                      status === 'done'        ? 'border-green-700 text-green-400' :
+                                                 'border-red-700 text-red-400'
+                    }`}
+                  >
+                    {label} {status === 'translating' ? '...' : status === 'done' ? '✓' : status === 'error' ? '✗' : '—'}
+                  </span>
+                )
+              })}
+            </div>
+          )}
+
           <button
             onClick={handleSave}
             disabled={saving || !canSave}
-            className="px-5 py-2 text-sm font-medium bg-[#f4c430] text-black rounded-lg hover:bg-[#e4b020] disabled:opacity-50 transition-colors"
+            className="px-5 py-2 text-sm font-medium bg-[#f4c430] text-black rounded-lg hover:bg-[#e4b020] disabled:opacity-50 transition-colors ml-auto"
           >
             {saving ? 'Saving...' : saved ? 'Saved!' : 'Save'}
           </button>

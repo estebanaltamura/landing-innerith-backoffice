@@ -28,6 +28,7 @@ export type CollectionConfig = {
   exclusiveField?: string
   exclusiveLabel?: string
   fields: FieldDef[]
+  translatableFields?: string[]
 }
 
 export const CONFIGS: Record<CrudTab, CollectionConfig> = {
@@ -61,6 +62,7 @@ export const CONFIGS: Record<CrudTab, CollectionConfig> = {
     collectionName: 'logs',
     displayField: 'title',
     orderField: 'order',
+    translatableFields: ['title', 'description'],
     fields: [
       { key: 'order', label: 'Order', type: 'number', required: true },
       { key: 'date', label: 'Date', type: 'text', required: true },
@@ -72,6 +74,7 @@ export const CONFIGS: Record<CrudTab, CollectionConfig> = {
     collectionName: 'faqs',
     displayField: 'question',
     orderField: 'order',
+    translatableFields: ['question', 'answer'],
     fields: [
       { key: 'order', label: 'Order', type: 'number', required: true },
       { key: 'question', label: 'Question', type: 'text', required: true },
@@ -88,7 +91,11 @@ export type BlockAlign = 'left' | 'center' | 'right' | 'justify'
 
 export type Block = {
   type: BlockType
-  content: string
+  content: string          
+  contentEnglish?: string
+  contentHindi?: string
+  contentChinese?: string
+  contentArab?: string
   maxWidth?: string
   align?: BlockAlign
 }
@@ -99,6 +106,14 @@ export type BlogPost = {
   date: string
   title: string
   description: string
+  titleEnglish?: string
+  titleHindi?: string
+  titleChinese?: string
+  titleArab?: string
+  descriptionEnglish?: string
+  descriptionHindi?: string
+  descriptionChinese?: string
+  descriptionArab?: string
   blocks?: Block[]
   pdfUrl?: string
   pdfName?: string

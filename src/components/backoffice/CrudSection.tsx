@@ -7,6 +7,9 @@ import { emptyForm } from './utils'
 import Spinner from './Spinner'
 import Modal from './Modal'
 import FieldInput from './FieldInput'
+import { translateStrings, LANG_FIELDS } from './translateBlocks'
+
+type TranslateStatus = 'idle' | 'translating' | 'done' | 'error'
 
 export default function CrudSection({ config }: { config: CollectionConfig }) {
   const [items, setItems] = useState<Item[]>([])
@@ -19,6 +22,28 @@ export default function CrudSection({ config }: { config: CollectionConfig }) {
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  const [translateStatus, setTranslateStatus] = useState<Record<string, TranslateStatus>>(
+    Object.fromEntries(LANG_FIELDS.map(({ field }) => [field, 'idle']))
+  )
+  const [modalSaved, setModalSaved] = useState(false)
+
+  const runTranslations = async (docId: string, data: Record<string, any>) => {
+    const fields = config.translatableFields!
+    const texts = fields.map((f) => data[f] ?? '')
+    for (const { key, field } of LANG_FIELDS) {
+      setTranslateStatus((s) => ({ ...s, [field]: 'translating' }))
+      try {
+        const translated = await translateStrings(texts, key)
+        const docUpdate: Record<string, string> = {}
+        fields.forEach((f, i) => { docUpdate[`${f}${key}`] = translated[i] ?? '' })
+        await updateDoc(doc(db, config.collectionName, docId), docUpdate)
+        setTranslateStatus((s) => ({ ...s, [field]: 'done' }))
+      } catch (err) {
+        console.error(`Translation error (${key}):`, err)
+        setTranslateStatus((s) => ({ ...s, [field]: 'error' }))
+      }
+    }
+  }
 
   const load = async () => {
     setLoading(true)
@@ -39,17 +64,23 @@ export default function CrudSection({ config }: { config: CollectionConfig }) {
 
   const formFields = config.fields.filter((f) => f.key !== config.orderField)
 
+  const resetTranslateState = () => {
+    setTranslateStatus(Object.fromEntries(LANG_FIELDS.map(({ field }) => [field, 'idle'])))
+    setModalSaved(false)
+  }
+
   const openAdd = () => {
-    setFormData(emptyForm(formFields)); setEditingItem(null); setModalMode('add')
+    resetTranslateState(); setFormData(emptyForm(formFields)); setEditingItem(null); setModalMode('add')
   }
 
   const openEdit = (item: Item) => {
+    resetTranslateState()
     const form: Record<string, any> = {}
     formFields.forEach((f) => { form[f.key] = item[f.key] ?? (f.type === 'checkbox' ? false : '') })
     setFormData(form); setEditingItem(item); setModalMode('edit')
   }
 
-  const closeModal = () => { setModalMode(null); setEditingItem(null); setFormData({}) }
+  const closeModal = () => { setModalMode(null); setEditingItem(null); setFormData({}); resetTranslateState() }
 
   const handleSave = async (e: FormEvent) => {
     e.preventDefault()
@@ -57,12 +88,23 @@ export default function CrudSection({ config }: { config: CollectionConfig }) {
     try {
       const data = { ...formData }
       if (config.orderField) data[config.orderField] = items.length + 1
+      let savedId: string | undefined
       if (modalMode === 'add') {
-        await addDoc(collection(db, config.collectionName), data)
+        const docRef = await addDoc(collection(db, config.collectionName), data)
+        savedId = docRef.id
       } else if (editingItem) {
         await updateDoc(doc(db, config.collectionName, editingItem._id), data)
+        savedId = editingItem._id
       }
-      await load(); closeModal()
+      await load()
+
+      if (config.translatableFields && savedId) {
+        setModalSaved(true)
+        setTranslateStatus(Object.fromEntries(LANG_FIELDS.map(({ field }) => [field, 'idle'])))
+        runTranslations(savedId, data)
+      } else {
+        closeModal()
+      }
     } catch (err) {
       console.error(err)
     } finally {
@@ -176,11 +218,34 @@ export default function CrudSection({ config }: { config: CollectionConfig }) {
                 <FieldInput field={field} value={formData[field.key]} onChange={(val) => setFormData((prev) => ({ ...prev, [field.key]: val }))} />
               </div>
             ))}
-            <div className="flex justify-end gap-3 mt-2">
-              <button type="button" onClick={closeModal} className="px-4 py-2 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-lg transition-colors">Cancel</button>
-              <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-medium bg-[#f4c430] text-black rounded-lg hover:bg-[#e4b020] disabled:opacity-50 transition-colors">
-                {saving ? 'Saving...' : 'Save'}
-              </button>
+            <div className="flex items-center justify-between gap-4 mt-2 flex-wrap">
+              {modalSaved && config.translatableFields && (
+                <div className="flex gap-2 flex-wrap">
+                  {LANG_FIELDS.map(({ field, label }) => {
+                    const status = translateStatus[field]
+                    return (
+                      <span
+                        key={field}
+                        className={`px-2 py-0.5 text-xs rounded border font-mono ${
+                          status === 'idle'        ? 'border-gray-700 text-gray-600' :
+                          status === 'translating' ? 'border-yellow-600 text-yellow-400 animate-pulse' :
+                          status === 'done'        ? 'border-green-700 text-green-400' :
+                                                     'border-red-700 text-red-400'
+                        }`}
+                      >
+                        {label} {status === 'translating' ? '...' : status === 'done' ? '✓' : status === 'error' ? '✗' : '—'}
+                      </span>
+                    )
+                  })}
+                </div>
+              )}
+              <div className="flex gap-3 ml-auto">
+                {!modalSaved && <button type="button" onClick={closeModal} className="px-4 py-2 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-lg transition-colors">Cancel</button>}
+                {!modalSaved
+                  ? <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-medium bg-[#f4c430] text-black rounded-lg hover:bg-[#e4b020] disabled:opacity-50 transition-colors">{saving ? 'Saving...' : 'Save'}</button>
+                  : <button type="button" onClick={closeModal} className="px-4 py-2 text-sm font-medium bg-[#f4c430] text-black rounded-lg hover:bg-[#e4b020] transition-colors">Close</button>
+                }
+              </div>
             </div>
           </form>
         </Modal>
