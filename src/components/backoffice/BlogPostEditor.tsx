@@ -42,7 +42,8 @@ export default function BlogPostEditor({ post, postsCount, onDone, onCancel }: P
     baseBlocks: Block[],
     currentTitle: string,
     currentDesc: string,
-    translateMeta: boolean,
+    translateTitle: boolean,
+    translateDesc: boolean,
   ) => {
     let current = baseBlocks
     for (const { key, field } of LANG_FIELDS) {
@@ -51,10 +52,13 @@ export default function BlogPostEditor({ post, postsCount, onDone, onCancel }: P
         const updatedBlocks = await translateBlocks(current, field, key)
         const docUpdate: Record<string, unknown> = { blocks: updatedBlocks }
 
-        if (translateMeta) {
-          const [translatedTitle, translatedDesc] = await translateStrings([currentTitle, currentDesc], key)
-          docUpdate[`title${key}`] = translatedTitle
-          docUpdate[`description${key}`] = translatedDesc
+        const metaTexts: string[] = []
+        const metaKeys: string[] = []
+        if (translateTitle) { metaTexts.push(currentTitle); metaKeys.push(`title${key}`) }
+        if (translateDesc)  { metaTexts.push(currentDesc);  metaKeys.push(`description${key}`) }
+        if (metaTexts.length > 0) {
+          const translated = await translateStrings(metaTexts, key)
+          metaKeys.forEach((k, i) => { docUpdate[k] = translated[i] })
         }
 
         await updateDoc(doc(db, 'blog', postId), docUpdate)
@@ -97,10 +101,8 @@ export default function BlogPostEditor({ post, postsCount, onDone, onCancel }: P
         onDone()
       } else {
         const prepared = invalidateChangedBlocks(blocks, savedBlocksRef.current)
-        const translateMeta =
-          title !== savedTitleRef.current ||
-          description !== savedDescRef.current ||
-          !post?.titleEnglish
+        const translateTitle = title !== savedTitleRef.current || !post?.titleEnglish
+        const translateDesc  = description !== savedDescRef.current || !post?.descriptionEnglish
 
         await updateDoc(doc(db, 'blog', postId), { ...meta, blocks: prepared, pdfUrl: '', pdfName: '' })
         setBlocks(prepared)
@@ -109,7 +111,7 @@ export default function BlogPostEditor({ post, postsCount, onDone, onCancel }: P
         savedDescRef.current = description
 
         setTranslateStatus(Object.fromEntries(LANG_FIELDS.map(({ field }) => [field, 'idle'])))
-        runTranslations(postId, prepared, title, description, translateMeta)
+        runTranslations(postId, prepared, title, description, translateTitle, translateDesc)
         // Don't call onDone() — stay open while translations run
       }
     } catch (err) {

@@ -25,17 +25,16 @@ export default function CrudSection({ config }: { config: CollectionConfig }) {
   const [translateStatus, setTranslateStatus] = useState<Record<string, TranslateStatus>>(
     Object.fromEntries(LANG_FIELDS.map(({ field }) => [field, 'idle']))
   )
-  const [modalSaved, setModalSaved] = useState(false)
+  const [dirtyFields, setDirtyFields] = useState<Set<string>>(new Set())
 
-  const runTranslations = async (docId: string, data: Record<string, any>) => {
-    const fields = config.translatableFields!
-    const texts = fields.map((f) => data[f] ?? '')
+  const runTranslations = async (docId: string, data: Record<string, any>, fieldsToTranslate: string[]) => {
+    const texts = fieldsToTranslate.map((f) => data[f] ?? '')
     for (const { key, field } of LANG_FIELDS) {
       setTranslateStatus((s) => ({ ...s, [field]: 'translating' }))
       try {
         const translated = await translateStrings(texts, key)
         const docUpdate: Record<string, string> = {}
-        fields.forEach((f, i) => { docUpdate[`${f}${key}`] = translated[i] ?? '' })
+        fieldsToTranslate.forEach((f, i) => { docUpdate[`${f}${key}`] = translated[i] ?? '' })
         await updateDoc(doc(db, config.collectionName, docId), docUpdate)
         setTranslateStatus((s) => ({ ...s, [field]: 'done' }))
       } catch (err) {
@@ -66,7 +65,7 @@ export default function CrudSection({ config }: { config: CollectionConfig }) {
 
   const resetTranslateState = () => {
     setTranslateStatus(Object.fromEntries(LANG_FIELDS.map(({ field }) => [field, 'idle'])))
-    setModalSaved(false)
+    setDirtyFields(new Set())
   }
 
   const openAdd = () => {
@@ -87,7 +86,8 @@ export default function CrudSection({ config }: { config: CollectionConfig }) {
     setSaving(true)
     try {
       const data = { ...formData }
-      if (config.orderField) data[config.orderField] = items.length + 1
+      if (config.orderField && modalMode === 'add') data[config.orderField] = items.length + 1
+      if (config.orderField && modalMode === 'edit' && editingItem) data[config.orderField] = editingItem[config.orderField]
       let savedId: string | undefined
       if (modalMode === 'add') {
         const docRef = await addDoc(collection(db, config.collectionName), data)
@@ -99,9 +99,21 @@ export default function CrudSection({ config }: { config: CollectionConfig }) {
       await load()
 
       if (config.translatableFields && savedId) {
-        setModalSaved(true)
-        setTranslateStatus(Object.fromEntries(LANG_FIELDS.map(({ field }) => [field, 'idle'])))
-        runTranslations(savedId, data)
+        const fieldsToTranslate = modalMode === 'add'
+          ? config.translatableFields
+          : config.translatableFields.filter((f) => dirtyFields.has(f) && String(data[f] ?? '') !== String(editingItem?.[f] ?? ''))
+
+        if (modalMode === 'add') {
+          closeModal()
+          runTranslations(savedId, data, fieldsToTranslate)
+        } else if (fieldsToTranslate.length > 0) {
+          setDirtyFields(new Set())
+          setEditingItem((prev) => prev ? { ...prev, ...data } : prev)
+          setTranslateStatus(Object.fromEntries(LANG_FIELDS.map(({ field }) => [field, 'idle'])))
+          runTranslations(savedId, data, fieldsToTranslate)
+        } else {
+          closeModal()
+        }
       } else {
         closeModal()
       }
@@ -215,11 +227,18 @@ export default function CrudSection({ config }: { config: CollectionConfig }) {
                 <label className="block text-xs text-gray-400 mb-1">
                   {field.label}{field.required && <span className="text-[#f4c430] ml-0.5">*</span>}
                 </label>
-                <FieldInput field={field} value={formData[field.key]} onChange={(val) => setFormData((prev) => ({ ...prev, [field.key]: val }))} />
+                <FieldInput
+                  field={field}
+                  value={formData[field.key]}
+                  onChange={(val) => {
+                    setFormData((prev) => ({ ...prev, [field.key]: val }))
+                    setDirtyFields((prev) => new Set(Array.from(prev).concat(field.key)))
+                  }}
+                />
               </div>
             ))}
             <div className="flex items-center justify-between gap-4 mt-2 flex-wrap">
-              {modalSaved && config.translatableFields && (
+              {config.translatableFields && Object.values(translateStatus).some((s) => s !== 'idle') && (
                 <div className="flex gap-2 flex-wrap">
                   {LANG_FIELDS.map(({ field, label }) => {
                     const status = translateStatus[field]
@@ -240,11 +259,14 @@ export default function CrudSection({ config }: { config: CollectionConfig }) {
                 </div>
               )}
               <div className="flex gap-3 ml-auto">
-                {!modalSaved && <button type="button" onClick={closeModal} className="px-4 py-2 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-lg transition-colors">Cancel</button>}
-                {!modalSaved
-                  ? <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-medium bg-[#f4c430] text-black rounded-lg hover:bg-[#e4b020] disabled:opacity-50 transition-colors">{saving ? 'Saving...' : 'Save'}</button>
-                  : <button type="button" onClick={closeModal} className="px-4 py-2 text-sm font-medium bg-[#f4c430] text-black rounded-lg hover:bg-[#e4b020] transition-colors">Close</button>
-                }
+                <button type="button" onClick={closeModal} className="px-4 py-2 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-lg transition-colors">Cancel</button>
+                <button
+                  type="submit"
+                  disabled={saving || Object.values(translateStatus).some((s) => s === 'translating')}
+                  className="px-4 py-2 text-sm font-medium bg-[#f4c430] text-black rounded-lg hover:bg-[#e4b020] disabled:opacity-50 transition-colors"
+                >
+                  {saving ? 'Saving...' : 'Save'}
+                </button>
               </div>
             </div>
           </form>
